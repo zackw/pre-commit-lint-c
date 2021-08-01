@@ -10,15 +10,14 @@ integrates five C/C++ linters:
 [uncrustify](http://uncrustify.sourceforge.net/),
 [cppcheck](http://cppcheck.sourceforge.net/)
 
-Many of these linters will return 0 on error, which pre-commit will then
-mark as passing. Additionally, pre-commit has
-[a bug](https://github.com/pre-commit/pre-commit/issues/1000)
-where arguments after `--` are dropped. This repo's hooks for each command
-will fail correctly and honor all `--` arguments.
-
-This repo is available in both python and bash. To use a language, use `rev: $lang`
-in your `.pre-commit-config.yaml`. Master is set to python as the default as it is
-easier to maintain and troubleshoot.
+Some of these linters will always appear to “pass”
+if run directly from pre-commit;
+the hooks in this repo use wrapper scripts
+to detect errors accurately.
+They also work around
+pre-commit core’s inability to put the files to check
+anywhere but the end of the command line
+(see “The '--' doubledash option” below).
 
 ## Example Usage
 
@@ -41,7 +40,7 @@ repos:
       - id: clang-format
         args: [--style=Google]
       - id: clang-tidy
-        args: [-checks=clang-diagnostic-return-type]
+        args: [-checks=clang-diagnostic-return-type, --, -I., --]
       - id: oclint
         args: [-enable-clang-static-analyzer, -enable-global-analysis]
       - id: uncrustify
@@ -137,9 +136,34 @@ have a cmake-based project.
 
 ### The '--' doubledash option
 
-Options after `--` like `-std=c++11` will be interpreted correctly for
-`clang-tidy` and `oclint`. Make sure they sequentially follow the `--` argument
-in the hook's args list.
+If you need to give clang-tidy or oclint options after `--`
+(instead of using a compilation database),
+you need to put a *second* `--` marker in `args:`,
+after all of those options.
+This is because pre-commit core always runs hooks
+with the arguments in `args:`
+*followed by* the list of files to check
+(see [pre-commit issue #1000](https://github.com/pre-commit/pre-commit/issues/1000)).
+The second `--` allows the hook to tell
+where the trailing options end
+and the file list begins.
+For example, this `.pre-commit-config.yaml` stanza
+
+```
+    hooks:
+      - id: clang-tidy
+        args: [-checks=clang-diagnostic-return-type, --, -I., --]
+```
+
+will run clang-tidy like this:
+
+```
+clang-tidy -checks=clang-diagnostic-return-type [files to check] -- -I.
+```
+
+If you leave out the second `--`
+the hook will attempt to guess where the trailing options end,
+but this guess cannot be made 100% accurate.
 
 ### Standalone Hooks
 

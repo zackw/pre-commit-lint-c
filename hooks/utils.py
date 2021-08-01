@@ -113,18 +113,72 @@ class ClangAnalyzerCmd(Command):
         super().__init__(command, look_behind, args)
 
     def parse_ddash_args(self):
-        """pre-commit sends file as last arg, which causes problems with --
-        This function converts args (1 3 5 7 -- 6 8 0) => (0 1 3 5 7 -- 6 8),
-        Where 0 is the file pre-commit sends to the utility
-        See https://github.com/pre-commit/pre-commit/issues/1000
+        """pre-commit always puts the files to process
+        at the end of the argument list;
+        clang-tidy and oclint want some args after the files,
+        separated by `--`.
+        Rewrite an argument list of the form
 
-        Skip this for clang-format, as it's unexpected
-        Rotate if -- exists AND last arg is file AND pre-commit called $0"""
-        if "--" in self.args:
-            idx = self.args.index("--")
-            self.args = [self.args[-1]] + self.args[:idx] + self.args[idx:-1]
-        # Add a -- -DCAMKE_EXPORT_COMPILE_COMMANDS if -- is not specified
-        # To avoid compilation database errors.
+            -a -b -- -c -d -- foo.c bar.c
+
+        as
+
+            -a -b foo.c bar.c -- -c -d
+
+        For backward compatibility with older versions of the hooks,
+        also rewrite
+
+            -a -b -- -c -d foo.c bar.c
+
+        as
+
+            -a -b foo.c bar.c -- -c -d
+
+        In this case the post-options are assumed to end
+        with the first argument that doesn't begin with a dash,
+        so it will do the Wrong Thing with space-separated option args, e.g.
+
+            -a -b -- -I include -D USE_FSEEKO foo.c bar.c
+
+        will become
+
+            -a -b include -D USE_FSEEKO foo.c bar.c -- -I
+
+        Since we might have gotten it wrong like this,
+        issue a warning if we encounter only one `--` in the args."""
+
+        try:
+            ddash1 = self.args.index("--")
+        except ValueError:
+            # no `--` in args, leave as is
+            return
+
+        # this can't throw, we know there is at least one to find
+        ddash2 = self.args.rindex("--")
+        if ddash2 > ddash1:
+            self.args = (
+                self.args[:ddash1]
+                + self.args[(ddash2+1):]
+                + self.args[ddash1:ddash2]
+            )
+        else:
+            sys.stderr.buffer.write(
+                "Warning: Guessing end of post-options for {}\n"
+                "(see README section \"The '--' doubledash option\").\n"
+                .format(self.command)
+                .encode()
+            )
+            for nonopt in range(ddash1 + 1, len(self.args)):
+                if not self.args[nonopt] or self.args[nonopt][0] != "-":
+                    break
+            else:
+                # no non-option args after the `--`, leave as is
+                return
+            self.args = (
+                self.args[:ddash1]
+                + self.args[nonopt:]
+                + self.args[ddash1:nonopt]
+            )
 
 
 class FormatterCmd(Command):
